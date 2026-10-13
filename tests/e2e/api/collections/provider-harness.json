@@ -263264,6 +263264,427 @@
           }
         }
       ]
+    },
+    {
+      "name": "231. parallel_tool_calls=false reaches Claude as disable_parallel_tool_use (parallel tool use)",
+      "description": "parallel_tool_calls: false (and Anthropic tool_choice.disable_parallel_tool_use) was dropped on the way to Claude everywhere except /v1/chat/completions to Anthropic direct, so Claude still answered with several tool calls in one turn. Bedrock Converse has no typed field for it: the only spelling it accepts is a typeless additionalModelRequestFields.tool_choice.disable_parallel_tool_use next to toolConfig.toolChoice (a type there is a ValidationException), and with server tools only it rides on the tunneled tool_choice. The Anthropic Responses converter never set it, the /anthropic ingress discarded it, and the /bedrock InvokeModel ingress lost it converting tool_choice to Converse. 231.1 is the control: the same prompt without the flag must draw several calls, so the one-call rows below are meaningful. 231.2-231.5 pin the Bedrock Converse wire and the single call on chat, chat stream, Responses and /anthropic. 231.6-231.7 pin the native /bedrock InvokeModel and Converse ingresses. 231.8 pins the direct Anthropic Responses path.",
+      "item": [
+        {
+          "name": "231.1 bedrock/global.anthropic.claude-sonnet-4-6 /v1/chat/completions control: parallel_tool_calls omitted returns several tool calls (parallel tool use)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('231.1 exact success status', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var n = ((((pm.response.json().choices || [])[0] || {}).message || {}).tool_calls || []).length;",
+                  "pm.test('231.1 the prompt draws parallel calls, so the rows below that expect one are meaningful', function () {",
+                  "  pm.expect(n, 'expected several tool calls: ' + pm.response.text().slice(0, 1500)).to.be.at.least(2);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"bedrock/global.anthropic.claude-sonnet-4-6\",\n  \"max_tokens\": 512,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Get the weather in Tokyo, Paris and Lima. Call the tool for every city right now in this single response.\"\n    }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get the current weather for one city\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"city\": {\n              \"type\": \"string\"\n            }\n          },\n          \"required\": [\n            \"city\"\n          ]\n        }\n      }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "231.2 bedrock/global.anthropic.claude-sonnet-4-6 /v1/chat/completions parallel_tool_calls=false returns one tool call (parallel tool use)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('231.2 exact success status', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var n = ((((pm.response.json().choices || [])[0] || {}).message || {}).tool_calls || []).length;",
+                  "pm.test('231.2 exactly one tool call comes back', function () {",
+                  "  pm.expect(n, 'parallel tool use was not disabled: ' + pm.response.text().slice(0, 1500)).to.equal(1);",
+                  "});",
+                  "var rr = (pm.response.json().extra_fields || {}).raw_request;",
+                  "if (typeof rr === 'string') { try { rr = JSON.parse(rr); } catch (e) { rr = null; } }",
+                  "var wire = JSON.stringify(rr || null);",
+                  "pm.test('231.2 Converse carries disable_parallel_tool_use without a type, next to typed toolChoice.auto', function () {",
+                  "  pm.expect(rr, 'raw_request missing: ' + pm.response.text().slice(0, 500)).to.be.an('object');",
+                  "  pm.expect((rr.toolConfig || {}).toolChoice, 'typed toolChoice: ' + wire.slice(0, 1500)).to.eql({ auto: {} });",
+                  "  pm.expect((rr.additionalModelRequestFields || {}).tool_choice, 'additionalModelRequestFields.tool_choice: ' + wire.slice(0, 1500)).to.eql({ disable_parallel_tool_use: true });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"bedrock/global.anthropic.claude-sonnet-4-6\",\n  \"max_tokens\": 512,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Get the weather in Tokyo, Paris and Lima. Call the tool for every city right now in this single response.\"\n    }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get the current weather for one city\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"city\": {\n              \"type\": \"string\"\n            }\n          },\n          \"required\": [\n            \"city\"\n          ]\n        }\n      }\n    }\n  ],\n  \"parallel_tool_calls\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "231.3 bedrock/global.anthropic.claude-sonnet-4-6 /v1/chat/completions stream parallel_tool_calls=false streams one tool call (parallel tool use)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('231.3 exact success status', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var text = pm.response.text();",
+                  "var ids = {}, n = 0, sawDone = false, rr = null;",
+                  "text.split('\\n').forEach(function (line) {",
+                  "  if (line.indexOf('data: ') !== 0) { return; }",
+                  "  var data = line.slice(6).trim();",
+                  "  if (data === '[DONE]') { sawDone = true; return; }",
+                  "  var chunk;",
+                  "  try { chunk = JSON.parse(data); } catch (e) { return; }",
+                  "  if ((chunk.extra_fields || {}).raw_request) { rr = chunk.extra_fields.raw_request; }",
+                  "  (chunk.choices || []).forEach(function (ch) {",
+                  "    ((ch.delta || {}).tool_calls || []).forEach(function (t) {",
+                  "      if (t.id && !ids[t.id]) { ids[t.id] = true; n++; }",
+                  "    });",
+                  "  });",
+                  "});",
+                  "pm.test('231.3 stream terminates with [DONE]', function () {",
+                  "  pm.expect(sawDone, 'missing [DONE]: ' + text.slice(-800)).to.equal(true);",
+                  "});",
+                  "pm.test('231.3 exactly one tool call streams back', function () {",
+                  "  pm.expect(n, 'parallel tool use was not disabled: ' + text.slice(0, 1500)).to.equal(1);",
+                  "});",
+                  "if (typeof rr === 'string') { try { rr = JSON.parse(rr); } catch (e) { rr = null; } }",
+                  "var wire = JSON.stringify(rr || null);",
+                  "pm.test('231.3 Converse carries disable_parallel_tool_use without a type, next to typed toolChoice.auto', function () {",
+                  "  pm.expect(rr, 'raw_request missing: ' + pm.response.text().slice(0, 500)).to.be.an('object');",
+                  "  pm.expect((rr.toolConfig || {}).toolChoice, 'typed toolChoice: ' + wire.slice(0, 1500)).to.eql({ auto: {} });",
+                  "  pm.expect((rr.additionalModelRequestFields || {}).tool_choice, 'additionalModelRequestFields.tool_choice: ' + wire.slice(0, 1500)).to.eql({ disable_parallel_tool_use: true });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"bedrock/global.anthropic.claude-sonnet-4-6\",\n  \"max_tokens\": 512,\n  \"stream\": true,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Get the weather in Tokyo, Paris and Lima. Call the tool for every city right now in this single response.\"\n    }\n  ],\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"function\": {\n        \"name\": \"get_weather\",\n        \"description\": \"Get the current weather for one city\",\n        \"parameters\": {\n          \"type\": \"object\",\n          \"properties\": {\n            \"city\": {\n              \"type\": \"string\"\n            }\n          },\n          \"required\": [\n            \"city\"\n          ]\n        }\n      }\n    }\n  ],\n  \"parallel_tool_calls\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "231.4 bedrock/global.anthropic.claude-sonnet-4-6 /v1/responses parallel_tool_calls=false returns one function_call (parallel tool use)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('231.4 exact success status', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var n = (pm.response.json().output || []).filter(function (o) { return o && o.type === 'function_call'; }).length;",
+                  "pm.test('231.4 exactly one tool call comes back', function () {",
+                  "  pm.expect(n, 'parallel tool use was not disabled: ' + pm.response.text().slice(0, 1500)).to.equal(1);",
+                  "});",
+                  "var rr = (pm.response.json().extra_fields || {}).raw_request;",
+                  "if (typeof rr === 'string') { try { rr = JSON.parse(rr); } catch (e) { rr = null; } }",
+                  "var wire = JSON.stringify(rr || null);",
+                  "pm.test('231.4 Converse carries disable_parallel_tool_use without a type, next to typed toolChoice.auto', function () {",
+                  "  pm.expect(rr, 'raw_request missing: ' + pm.response.text().slice(0, 500)).to.be.an('object');",
+                  "  pm.expect((rr.toolConfig || {}).toolChoice, 'typed toolChoice: ' + wire.slice(0, 1500)).to.eql({ auto: {} });",
+                  "  pm.expect((rr.additionalModelRequestFields || {}).tool_choice, 'additionalModelRequestFields.tool_choice: ' + wire.slice(0, 1500)).to.eql({ disable_parallel_tool_use: true });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"bedrock/global.anthropic.claude-sonnet-4-6\",\n  \"max_output_tokens\": 512,\n  \"input\": \"Get the weather in Tokyo, Paris and Lima. Call the tool for every city right now in this single response.\",\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"name\": \"get_weather\",\n      \"description\": \"Get the current weather for one city\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"city\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"city\"\n        ]\n      }\n    }\n  ],\n  \"parallel_tool_calls\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/responses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "responses"
+              ]
+            }
+          }
+        },
+        {
+          "name": "231.5 bedrock/global.anthropic.claude-sonnet-4-6 /anthropic/v1/messages tool_choice.disable_parallel_tool_use=true returns one tool_use (parallel tool use)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('231.5 exact success status', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var n = (pm.response.json().content || []).filter(function (b) { return b && b.type === 'tool_use'; }).length;",
+                  "pm.test('231.5 exactly one tool call comes back', function () {",
+                  "  pm.expect(n, 'parallel tool use was not disabled: ' + pm.response.text().slice(0, 1500)).to.equal(1);",
+                  "});",
+                  "var rr = (pm.response.json().extra_fields || {}).raw_request;",
+                  "if (typeof rr === 'string') { try { rr = JSON.parse(rr); } catch (e) { rr = null; } }",
+                  "var wire = JSON.stringify(rr || null);",
+                  "pm.test('231.5 Converse carries disable_parallel_tool_use without a type, next to typed toolChoice.auto', function () {",
+                  "  pm.expect(rr, 'raw_request missing: ' + pm.response.text().slice(0, 500)).to.be.an('object');",
+                  "  pm.expect((rr.toolConfig || {}).toolChoice, 'typed toolChoice: ' + wire.slice(0, 1500)).to.eql({ auto: {} });",
+                  "  pm.expect((rr.additionalModelRequestFields || {}).tool_choice, 'additionalModelRequestFields.tool_choice: ' + wire.slice(0, 1500)).to.eql({ disable_parallel_tool_use: true });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"bedrock/global.anthropic.claude-sonnet-4-6\",\n  \"max_tokens\": 512,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Get the weather in Tokyo, Paris and Lima. Call the tool for every city right now in this single response.\"\n    }\n  ],\n  \"tools\": [\n    {\n      \"name\": \"get_weather\",\n      \"description\": \"Get the current weather for one city\",\n      \"input_schema\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"city\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"city\"\n        ]\n      }\n    }\n  ],\n  \"tool_choice\": {\n    \"type\": \"auto\",\n    \"disable_parallel_tool_use\": true\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/anthropic/v1/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "anthropic",
+                "v1",
+                "messages"
+              ]
+            }
+          }
+        },
+        {
+          "name": "231.6 bedrock global.anthropic.claude-sonnet-4-6 /bedrock InvokeModel tool_choice.disable_parallel_tool_use=true returns one tool_use (parallel tool use)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('231.6 exact success status', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var n = (pm.response.json().content || []).filter(function (b) { return b && b.type === 'tool_use'; }).length;",
+                  "pm.test('231.6 exactly one tool call comes back', function () {",
+                  "  pm.expect(n, 'parallel tool use was not disabled: ' + pm.response.text().slice(0, 1500)).to.equal(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"anthropic_version\": \"bedrock-2023-05-31\",\n  \"max_tokens\": 512,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Get the weather in Tokyo, Paris and Lima. Call the tool for every city right now in this single response.\"\n    }\n  ],\n  \"tools\": [\n    {\n      \"name\": \"get_weather\",\n      \"description\": \"Get the current weather for one city\",\n      \"input_schema\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"city\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"city\"\n        ]\n      }\n    }\n  ],\n  \"tool_choice\": {\n    \"type\": \"auto\",\n    \"disable_parallel_tool_use\": true\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bedrock/model/global.anthropic.claude-sonnet-4-6/invoke",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bedrock",
+                "model",
+                "global.anthropic.claude-sonnet-4-6",
+                "invoke"
+              ]
+            }
+          }
+        },
+        {
+          "name": "231.7 bedrock global.anthropic.claude-sonnet-4-6 /bedrock Converse additionalModelRequestFields.tool_choice.disable_parallel_tool_use returns one toolUse (parallel tool use)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('231.7 exact success status', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var n = ((((pm.response.json().output || {}).message || {}).content) || []).filter(function (b) { return b && b.toolUse; }).length;",
+                  "pm.test('231.7 exactly one tool call comes back', function () {",
+                  "  pm.expect(n, 'parallel tool use was not disabled: ' + pm.response.text().slice(0, 1500)).to.equal(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"text\": \"Get the weather in Tokyo, Paris and Lima. Call the tool for every city right now in this single response.\"\n        }\n      ]\n    }\n  ],\n  \"inferenceConfig\": {\n    \"maxTokens\": 512\n  },\n  \"toolConfig\": {\n    \"tools\": [\n      {\n        \"toolSpec\": {\n          \"name\": \"get_weather\",\n          \"description\": \"Get the current weather for one city\",\n          \"inputSchema\": {\n            \"json\": {\n              \"type\": \"object\",\n              \"properties\": {\n                \"city\": {\n                  \"type\": \"string\"\n                }\n              },\n              \"required\": [\n                \"city\"\n              ]\n            }\n          }\n        }\n      }\n    ],\n    \"toolChoice\": {\n      \"auto\": {}\n    }\n  },\n  \"additionalModelRequestFields\": {\n    \"tool_choice\": {\n      \"disable_parallel_tool_use\": true\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bedrock/model/global.anthropic.claude-sonnet-4-6/converse",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bedrock",
+                "model",
+                "global.anthropic.claude-sonnet-4-6",
+                "converse"
+              ]
+            }
+          }
+        },
+        {
+          "name": "231.8 anthropic/claude-sonnet-4-6 /v1/responses parallel_tool_calls=false returns one function_call (parallel tool use)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('231.8 exact success status', function () {",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.equal(200);",
+                  "});",
+                  "if (pm.response.code !== 200) { return; }",
+                  "var n = (pm.response.json().output || []).filter(function (o) { return o && o.type === 'function_call'; }).length;",
+                  "pm.test('231.8 exactly one tool call comes back', function () {",
+                  "  pm.expect(n, 'parallel tool use was not disabled: ' + pm.response.text().slice(0, 1500)).to.equal(1);",
+                  "});",
+                  "var rr = (pm.response.json().extra_fields || {}).raw_request;",
+                  "if (typeof rr === 'string') { try { rr = JSON.parse(rr); } catch (e) { rr = null; } }",
+                  "var wire = JSON.stringify(rr || null);",
+                  "pm.test('231.8 Anthropic body carries tool_choice auto with disable_parallel_tool_use', function () {",
+                  "  pm.expect(rr, 'raw_request missing: ' + pm.response.text().slice(0, 500)).to.be.an('object');",
+                  "  pm.expect(rr.tool_choice, 'tool_choice: ' + wire.slice(0, 1500)).to.eql({ type: 'auto', disable_parallel_tool_use: true });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"anthropic/claude-sonnet-4-6\",\n  \"max_output_tokens\": 512,\n  \"input\": \"Get the weather in Tokyo, Paris and Lima. Call the tool for every city right now in this single response.\",\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"name\": \"get_weather\",\n      \"description\": \"Get the current weather for one city\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"city\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"city\"\n        ]\n      }\n    }\n  ],\n  \"parallel_tool_calls\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/responses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "responses"
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }
