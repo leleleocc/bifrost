@@ -129,6 +129,7 @@ type ClientConfig struct {
 	HiddenRequestTypes                    []string                              `json:"hidden_request_types,omitempty"`              // Request types excluded from dashboard and log API reads; logs are still written
 	RoutingChainMaxDepth                  int                                   `json:"routing_chain_max_depth"`                     // Maximum depth for routing rule chain evaluation (default: 10)
 	MCPExternalClientURL                  *schemas.SecretVar                    `json:"mcp_external_client_url,omitempty"`           // Public base URL used as redirect_uri when Bifrost acts as an OAuth client to upstream MCP servers. Supports env var syntax ("env.MY_VAR")
+	SkillsExternalClientURL               *schemas.SecretVar                    `json:"skills_external_client_url,omitempty"`        // Public base URL for Skills Repository marketplaces; empty disables marketplace serving
 	A2AStoreRawRequestResponse            bool                                  `json:"a2a_store_raw_request_response"`
 	A2AExternalClientURL                  *schemas.SecretVar                    `json:"a2a_external_client_url,omitempty"` // Public base URL used for Agent Gateway push-notification callback URLs and served agent card URLs. Supports env var syntax ("env.MY_VAR") and vault refs
 	MCPServerAuthMode                     tables.MCPServerAuthMode              `json:"mcp_server_auth_mode,omitempty"`    // How /mcp authenticates inbound clients: headers (default), both, or oauth.
@@ -512,6 +513,13 @@ func (c *ClientConfig) GenerateClientConfigHash() (string, error) {
 			hash.Write([]byte("externalClientURL:val:" + c.MCPExternalClientURL.GetValue()))
 		}
 	}
+	if c.SkillsExternalClientURL.IsSet() {
+		if c.SkillsExternalClientURL.IsFromSecret() {
+			hash.Write([]byte("skillsExternalClientURL:ref:" + c.SkillsExternalClientURL.GetRawRef()))
+		} else {
+			hash.Write([]byte("skillsExternalClientURL:val:" + c.SkillsExternalClientURL.GetValue()))
+		}
+	}
 
 	// Only hashed when set to avoid hash churn on existing configs that predate the field.
 	if c.A2AStoreRawRequestResponse {
@@ -608,6 +616,9 @@ func sortedStringsJSON(values []string) ([]byte, error) {
 // Redacted returns a copy of ClientConfig with any env-backed SecretVar fields masked.
 func (c *ClientConfig) Redacted() ClientConfig {
 	out := *c
+	if c.SkillsExternalClientURL != nil && c.SkillsExternalClientURL.IsFromSecret() {
+		out.SkillsExternalClientURL = c.SkillsExternalClientURL.Redacted()
+	}
 	if c.MCPExternalClientURL != nil && c.MCPExternalClientURL.IsFromSecret() {
 		out.MCPExternalClientURL = c.MCPExternalClientURL.Redacted()
 	}

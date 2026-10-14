@@ -4916,3 +4916,40 @@ func TestMigrationAddMCPClientOpenAPIColumns_Idempotent(t *testing.T) {
 	assert.True(t, row.OpenAPISpec == nil || *row.OpenAPISpec == "")
 	assert.Nil(t, row.OpenAPIConfigJSON)
 }
+
+// TestMigrationSkillsExternalClientURL copies the current MCP client URL without overwriting explicit skills configuration.
+func TestMigrationSkillsExternalClientURL(t *testing.T) {
+	for _, legacy := range []bool{true, false} {
+		t.Run(fmt.Sprintf("legacy=%v", legacy), func(t *testing.T) {
+			db := setupTestDB(t)
+			ctx := context.Background()
+			require.NoError(t, db.Exec("CREATE TABLE config_client (id INTEGER PRIMARY KEY)").Error)
+			require.NoError(t, migrationAddSkillsExternalClientURLColumn(ctx, db, testMigrationLogger))
+			require.True(t, db.Migrator().HasColumn("config_client", "skills_external_client_url"))
+			if legacy {
+				require.NoError(t, db.Exec("ALTER TABLE config_client ADD COLUMN mcp_external_client_url VARCHAR(512)").Error)
+				require.NoError(t, db.Exec("INSERT INTO config_client (id, mcp_external_client_url, skills_external_client_url) VALUES (1, ?, NULL), (2, ?, ?), (3, '', NULL)", "env.BIFROST_URL", "https://mcp.example", "https://skills.example").Error)
+			} else {
+				require.NoError(t, db.Exec("INSERT INTO config_client (id) VALUES (1)").Error)
+			}
+			require.NoError(t, migrationAddSkillsExternalClientURLColumn(ctx, db, testMigrationLogger))
+			require.NoError(t, migrationBackfillSkillsExternalClientURL(ctx, db, testMigrationLogger))
+			require.NoError(t, migrationBackfillSkillsExternalClientURL(ctx, db, testMigrationLogger))
+			var rows []struct {
+				ID                      int
+				SkillsExternalClientURL string
+			}
+			require.NoError(t, db.Table("config_client").Order("id").Find(&rows).Error)
+			if legacy {
+				require.Equal(t, "env.BIFROST_URL", rows[0].SkillsExternalClientURL)
+				require.Equal(t, "https://skills.example", rows[1].SkillsExternalClientURL)
+				require.Empty(t, rows[2].SkillsExternalClientURL)
+				var mcpURL string
+				require.NoError(t, db.Table("config_client").Select("mcp_external_client_url").Where("id = 1").Scan(&mcpURL).Error)
+				require.Equal(t, "env.BIFROST_URL", mcpURL)
+			} else {
+				require.Empty(t, rows[0].SkillsExternalClientURL)
+			}
+		})
+	}
+}

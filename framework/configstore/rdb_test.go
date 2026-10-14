@@ -5522,3 +5522,42 @@ func TestA2ARawCaptureConfigRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, want, other)
 }
+
+// TestGenerateClientConfigHash_SkillsExternalClientURL keeps unset hashes stable and distinguishes configured URLs.
+func TestGenerateClientConfigHash_SkillsExternalClientURL(t *testing.T) {
+	base := &ClientConfig{InitialPoolSize: 100, LogRetentionDays: 30}
+	baseHash, err := base.GenerateClientConfigHash()
+	require.NoError(t, err)
+
+	// An unset skills external client URL must not change the hash: existing
+	// deployments see no config drift after upgrade.
+	unset := &ClientConfig{InitialPoolSize: 100, LogRetentionDays: 30, SkillsExternalClientURL: schemas.NewSecretVar("")}
+	unsetHash, err := unset.GenerateClientConfigHash()
+	require.NoError(t, err)
+	assert.Equal(t, baseHash, unsetHash)
+
+	// A configured URL is a meaningful config change.
+	withURL := &ClientConfig{InitialPoolSize: 100, LogRetentionDays: 30, SkillsExternalClientURL: schemas.NewSecretVar("https://bifrost.example.com")}
+	urlHash, err := withURL.GenerateClientConfigHash()
+	require.NoError(t, err)
+	assert.NotEqual(t, baseHash, urlHash)
+	t.Setenv("BIFROST_SKILLS_URL_TEST", "https://skills.example")
+	store := setupRDBTestStore(t)
+	require.NoError(t, store.UpdateClientConfig(context.Background(), base))
+	withEnv, err := store.GetClientConfig(context.Background())
+	require.NoError(t, err)
+	withEnv.SkillsExternalClientURL = schemas.NewSecretVar("env.BIFROST_SKILLS_URL_TEST")
+	require.NoError(t, store.UpdateClientConfig(context.Background(), withEnv))
+	stored, err := store.GetClientConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "env.BIFROST_SKILLS_URL_TEST", stored.SkillsExternalClientURL.GetRawRef())
+	require.Equal(t, "https://skills.example", stored.SkillsExternalClientURL.GetValue())
+	wantHash, err := withEnv.GenerateClientConfigHash()
+	require.NoError(t, err)
+	gotHash, err := stored.GenerateClientConfigHash()
+	require.NoError(t, err)
+	require.Equal(t, wantHash, gotHash)
+	redacted := stored.Redacted()
+	require.NotEqual(t, "https://skills.example", redacted.SkillsExternalClientURL.GetValue())
+	require.Equal(t, "env.BIFROST_SKILLS_URL_TEST", redacted.SkillsExternalClientURL.GetRawRef())
+}
