@@ -1843,19 +1843,10 @@ func (p *LoggerPlugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.Bifr
 		initialData.ResponsesInputHistory = responsesInputHistory
 
 		switch req.RequestType {
-		case schemas.TextCompletionRequest, schemas.TextCompletionStreamRequest:
-			initialData.Params = req.TextCompletionRequest.Params
-		case schemas.ChatCompletionRequest, schemas.ChatCompletionStreamRequest:
-			initialData.Params = req.ChatRequest.Params
-			initialData.Tools = req.ChatRequest.Params.Tools
-		case schemas.ResponsesRequest, schemas.ResponsesStreamRequest, schemas.WebSocketResponsesRequest:
-			initialData.Params = req.ResponsesRequest.Params
-
-			var tools []schemas.ChatTool
-			for _, tool := range req.ResponsesRequest.Params.Tools {
-				tools = append(tools, *tool.ToChatTool())
-			}
-			initialData.Tools = tools
+		case schemas.TextCompletionRequest, schemas.TextCompletionStreamRequest,
+			schemas.ChatCompletionRequest, schemas.ChatCompletionStreamRequest,
+			schemas.ResponsesRequest, schemas.ResponsesStreamRequest, schemas.WebSocketResponsesRequest:
+			initialData.Params, initialData.Tools = textRequestParamsAndTools(req)
 		case schemas.RealtimeRequest:
 			if req.ResponsesRequest != nil {
 				initialData.Params = req.ResponsesRequest.Params
@@ -2352,6 +2343,7 @@ func (p *LoggerPlugin) PostLLMHook(ctx *schemas.BifrostContext, result *schemas.
 		// stamped after our PreLLMHook, as on the passthrough path): take them back out.
 		dropCapturedInput(entry)
 	}
+	markPassthroughForParsing(ctx, entry, contentLoggingEnabled)
 	entry.GuardrailDebugParsed = guardrailMetadata
 	entry.RoutingMetadataParsed = routingMetadata
 	// Apply common output fields. For cache hits, prefer the cache-serve
