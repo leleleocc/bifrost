@@ -675,3 +675,40 @@ func responsesTextAndCalls(output []schemas.ResponsesMessage) (string, []*schema
 	}
 	return text.String(), calls
 }
+
+func TestInferRequestType(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider schemas.ModelProvider
+		model    string
+		method   string
+		path     string
+		stream   bool
+		want     schemas.RequestType
+	}{
+		{"openai chat", schemas.OpenAI, "gpt-4o", "POST", "/v1/chat/completions", false, schemas.ChatCompletionRequest},
+		{"openai chat stream", schemas.OpenAI, "gpt-4o", "POST", "/v1/chat/completions", true, schemas.ChatCompletionStreamRequest},
+		{"codex responses stream", schemas.OpenAI, "gpt-5", "POST", "/backend-api/codex/responses", true, schemas.ResponsesStreamRequest},
+		{"openai embeddings stream has no stream variant", schemas.OpenAI, "text-embedding-3-small", "POST", "/v1/embeddings", true, schemas.EmbeddingRequest},
+		{"anthropic messages", schemas.Anthropic, "claude-sonnet-4-5", "POST", "/v1/messages", false, schemas.ResponsesRequest},
+		{"azure foundry anthropic", schemas.Azure, "claude-sonnet-4-5", "POST", "/anthropic/v1/messages", false, schemas.ResponsesRequest},
+		{"vertex claude streamRawPredict", schemas.Vertex, "claude-sonnet-4-5", "POST", "/projects/p/locations/l/publishers/anthropic/models/claude-sonnet-4-5:streamRawPredict", true, schemas.ResponsesStreamRequest},
+		{"vertex mistral", schemas.Vertex, "mistral-large", "POST", "/projects/p/locations/l/publishers/mistralai/models/mistral-large:rawPredict", false, schemas.ChatCompletionRequest},
+		{"gemini generate stream", schemas.Gemini, "gemini-2.5-flash", "POST", "/models/gemini-2.5-flash:streamGenerateContent?alt=sse", true, schemas.ResponsesStreamRequest},
+		{"openai fine-tuning has no typed equivalent", schemas.OpenAI, "", "POST", "/v1/fine-tuning/jobs", false, ""},
+		{"bedrock agent route", schemas.Bedrock, "", "POST", "/agents/a/agentAliases/b/sessions/c/text", false, ""},
+		{"custom provider name is not a wire format", "my-openai", "gpt-4o", "POST", "/v1/chat/completions", false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, InferRequestType(tt.provider, tt.model, tt.method, tt.path, tt.stream))
+		})
+	}
+}
+
+func BenchmarkInferRequestType(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = InferRequestType(schemas.OpenAI, "gpt-4o", "POST", "/v1/chat/completions", true)
+	}
+}

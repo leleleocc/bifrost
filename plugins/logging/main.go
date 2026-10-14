@@ -1168,6 +1168,8 @@ type InitialLogData struct {
 	Metadata               map[string]any
 	AgentCorrelationID     string
 	PassthroughRequestBody string // Raw body for passthrough requests (UTF-8)
+	PassthroughMethod      string // Passthrough route, recorded whatever the content policy: it types the row
+	PassthroughPath        string
 	UserAgent              string // Raw HTTP User-Agent of the calling client; mapped to a client app in the UI
 	App                    string // Backend-detected client app derived from UserAgent
 }
@@ -1836,6 +1838,10 @@ func (p *LoggerPlugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.Bifr
 	// governance may stamp a decision that turns content on after ours runs (the passthrough path).
 	// PostLLMHook applies the final policy and drops whatever it does not allow, and the processing
 	// notification below never carries input captured this way.
+	if req.PassthroughRequest != nil {
+		initialData.PassthroughMethod = req.PassthroughRequest.Method
+		initialData.PassthroughPath = req.PassthroughRequest.Path
+	}
 	captureProvisional := virtualKeyStampPending(ctx)
 	requestContentPolicy := p.resolveContentPolicy(ctx)
 	if requestContentPolicy.storeContent || captureProvisional {
@@ -2196,7 +2202,7 @@ func (p *LoggerPlugin) PostLLMHook(ctx *schemas.BifrostContext, result *schemas.
 		// stamped after our PreLLMHook, as on the passthrough path): take them back out.
 		dropCapturedInput(entry)
 	}
-	markPassthroughForParsing(ctx, entry, contentLoggingEnabled)
+	tagPassthroughEntry(ctx, entry, pending.InitialData, contentLoggingEnabled)
 	entry.GuardrailDebugParsed = guardrailMetadata
 	entry.RoutingMetadataParsed = routingMetadata
 	// Apply common output fields. For cache hits, prefer the cache-serve

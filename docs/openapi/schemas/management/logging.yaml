@@ -188,6 +188,13 @@ LogEntry:
     virtual_key:
       type: object
       additionalProperties: true
+    is_passthrough:
+      type: boolean
+      description: >-
+        The request came through a passthrough route (/openai_passthrough, /anthropic_passthrough,
+        /genai_passthrough, ...). Its object is the request type the route was inferred as
+        (chat_completion, responses, embedding, ...), or passthrough when the route has no typed
+        equivalent. Filtering objects=passthrough matches every passthrough row.
     passthrough_request_body:
       type: string
       description: Raw passthrough request body (for passthrough integration routes)

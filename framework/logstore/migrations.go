@@ -359,6 +359,7 @@ var logstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"logs_add_live_session_column"}, run: migrationAddLiveSessionColumn},
 	{IDs: []string{"agent_logs_init"}, run: migrationCreateAgentLogsTable},
 	{IDs: []string{"agent_logs_add_raw_payload_columns"}, run: migrationAddAgentRawPayloadColumns},
+	{IDs: []string{"logs_add_is_passthrough_column"}, run: migrationAddIsPassthroughColumn},
 }
 
 // areThereAnyPendingMigrations returns true if there are any pending migrations to be applied.
@@ -5738,4 +5739,29 @@ func migrationAddAgentRawPayloadColumns(ctx context.Context, db *gorm.DB, logger
 		},
 	}})
 	return m.Migrate()
+}
+
+// migrationAddIsPassthroughColumn adds the is_passthrough column to the logs table. A passthrough
+// call is stored under the request type its route was inferred as (chat_completion, responses, ...)
+// and tagged with this flag; rows written before it keep object_type=passthrough. A constant
+// default, so the ALTER does not rewrite the table on Postgres.
+func migrationAddIsPassthroughColumn(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "logs_add_is_passthrough_column"
+	logger.Info("[logstore] starting migration %s", migrationName)
+	defer logger.Info("[logstore] finished migration %s", migrationName)
+	opts := *migrator.DefaultOptions
+	opts.UseTransaction = true
+	m := migrator.New(db, &opts, []*migrator.Migration{{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			return addColumnIfNotExists(tx.WithContext(ctx), logger, &Log{}, "is_passthrough")
+		},
+		Rollback: func(tx *gorm.DB) error {
+			return dropColumnIfExists(tx.WithContext(ctx), logger, &Log{}, "is_passthrough")
+		},
+	}})
+	if err := m.Migrate(); err != nil {
+		return fmt.Errorf("error while adding is_passthrough column: %s", err.Error())
+	}
+	return nil
 }
