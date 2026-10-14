@@ -10,9 +10,11 @@
 package passthroughparse
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -191,6 +193,24 @@ func parseRequest(format wireFormat, requestType schemas.RequestType, body []byt
 				return nil, err
 			}
 			return &schemas.BifrostRequest{RequestType: requestType, TextCompletionRequest: native.ToBifrostTextCompletionRequest(ctx)}, nil
+		case schemas.EmbeddingRequest:
+			var native openai.OpenAIEmbeddingRequest
+			if err := sonic.Unmarshal(body, &native); err != nil {
+				return nil, err
+			}
+			return &schemas.BifrostRequest{RequestType: requestType, EmbeddingRequest: native.ToBifrostEmbeddingRequest(ctx)}, nil
+		case schemas.SpeechRequest:
+			var native openai.OpenAISpeechRequest
+			if err := sonic.Unmarshal(body, &native); err != nil {
+				return nil, err
+			}
+			return &schemas.BifrostRequest{RequestType: requestType, SpeechRequest: native.ToBifrostSpeechRequest(ctx)}, nil
+		case schemas.ImageGenerationRequest:
+			var native openai.OpenAIImageGenerationRequest
+			if err := sonic.Unmarshal(body, &native); err != nil {
+				return nil, err
+			}
+			return &schemas.BifrostRequest{RequestType: requestType, ImageGenerationRequest: native.ToBifrostImageGenerationRequest(ctx)}, nil
 		}
 	case wireAnthropic:
 		switch requestType {
@@ -225,9 +245,49 @@ func parseRequest(format wireFormat, requestType schemas.RequestType, body []byt
 				return nil, err
 			}
 			return &schemas.BifrostRequest{RequestType: requestType, CountTokensRequest: native.ToGeminiGenerationRequest().ToBifrostResponsesRequest(ctx)}, nil
+		case schemas.EmbeddingRequest:
+			return parseGeminiEmbeddingRequest(ctx, body)
+		case schemas.ImageGenerationRequest:
+			// :predict on an Imagen model; the request carries the prompt per instance.
+			var native gemini.GeminiImagenRequest
+			if err := sonic.Unmarshal(body, &native); err != nil {
+				return nil, err
+			}
+			if len(native.Instances) == 0 || native.Instances[0].Prompt == "" {
+				return nil, nil
+			}
+			return &schemas.BifrostRequest{RequestType: requestType, ImageGenerationRequest: &schemas.BifrostImageGenerationRequest{
+				Input: &schemas.ImageGenerationInput{Prompt: native.Instances[0].Prompt},
+			}}, nil
 		}
 	}
 	return nil, nil
+}
+
+// parseGeminiEmbeddingRequest decodes :embedContent (one content) and :batchEmbedContents (a
+// requests array) bodies.
+func parseGeminiEmbeddingRequest(ctx *schemas.BifrostContext, body []byte) (*schemas.BifrostRequest, error) {
+	var (
+		converted *schemas.BifrostEmbeddingRequest
+		err       error
+	)
+	if bytes.Contains(body, []byte(`"requests"`)) {
+		var native gemini.GeminiBatchEmbeddingRequest
+		if err := sonic.Unmarshal(body, &native); err != nil {
+			return nil, err
+		}
+		converted, err = native.ToBifrostEmbeddingRequest(ctx)
+	} else {
+		var native gemini.GeminiEmbeddingRequest
+		if err := sonic.Unmarshal(body, &native); err != nil {
+			return nil, err
+		}
+		converted, err = native.ToBifrostEmbeddingRequest(ctx)
+	}
+	if err != nil || converted == nil {
+		return nil, err
+	}
+	return &schemas.BifrostRequest{RequestType: schemas.EmbeddingRequest, EmbeddingRequest: converted}, nil
 }
 
 func parseResponse(format wireFormat, requestType schemas.RequestType, model string, body []byte) (*schemas.BifrostResponse, error) {
@@ -253,6 +313,28 @@ func parseResponse(format wireFormat, requestType schemas.RequestType, model str
 				return nil, err
 			}
 			return &schemas.BifrostResponse{TextCompletionResponse: &resp}, nil
+		case schemas.EmbeddingRequest:
+			var resp schemas.BifrostEmbeddingResponse
+			if err := sonic.Unmarshal(body, &resp); err != nil {
+				return nil, err
+			}
+			return &schemas.BifrostResponse{EmbeddingResponse: &resp}, nil
+		case schemas.ImageGenerationRequest, schemas.ImageEditRequest, schemas.ImageVariationRequest:
+			var resp schemas.BifrostImageGenerationResponse
+			if err := sonic.Unmarshal(body, &resp); err != nil {
+				return nil, err
+			}
+			return &schemas.BifrostResponse{ImageGenerationResponse: &resp}, nil
+		case schemas.TranscriptionRequest:
+			// response_format text/srt/vtt returns plain text, which carries nothing to decode.
+			if !looksLikeJSONObject(body) {
+				return nil, nil
+			}
+			var resp schemas.BifrostTranscriptionResponse
+			if err := sonic.Unmarshal(body, &resp); err != nil {
+				return nil, err
+			}
+			return &schemas.BifrostResponse{TranscriptionResponse: &resp}, nil
 		}
 	case wireAnthropic:
 		switch requestType {
@@ -289,7 +371,33 @@ func parseResponse(format wireFormat, requestType schemas.RequestType, model str
 				return nil, err
 			}
 			return &schemas.BifrostResponse{CountTokensResponse: native.ToBifrostCountTokensResponse(model)}, nil
+		case schemas.EmbeddingRequest:
+			var native gemini.GeminiEmbeddingResponse
+			if err := sonic.Unmarshal(body, &native); err != nil {
+				return nil, err
+			}
+			converted := gemini.ToBifrostEmbeddingResponse(&native, model)
+			if converted == nil {
+				return nil, nil
+			}
+			return &schemas.BifrostResponse{EmbeddingResponse: converted}, nil
+		case schemas.ImageGenerationRequest:
+			var native gemini.GeminiImagenResponse
+			if err := sonic.Unmarshal(body, &native); err != nil {
+				return nil, err
+			}
+			// :predict also serves non-Imagen models; only a response that carried images is one.
+			converted := native.ToBifrostImageGenerationResponse()
+			if converted == nil || !slices.ContainsFunc(converted.Data, func(d schemas.ImageData) bool { return d.B64JSON != "" || d.URL != "" }) {
+				return nil, nil
+			}
+			return &schemas.BifrostResponse{ImageGenerationResponse: converted}, nil
 		}
 	}
 	return nil, nil
+}
+
+func looksLikeJSONObject(body []byte) bool {
+	trimmed := bytes.TrimSpace(body)
+	return len(trimmed) > 0 && trimmed[0] == '{'
 }
