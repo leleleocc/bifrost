@@ -9,6 +9,49 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
+// IsInteractionsPassthroughPath reports whether a Gemini passthrough path targets the
+// Interactions API (/interactions, no colon action). It has no typed Bifrost equivalent, so
+// ClassifyPassthroughPath returns "" for it and callers that care check this first.
+func IsInteractionsPassthroughPath(path string) bool {
+	if idx := strings.IndexByte(path, '?'); idx >= 0 {
+		path = path[:idx]
+	}
+	return strings.Contains(path, "/interactions")
+}
+
+// ClassifyPassthroughPath maps a Gemini/Vertex passthrough path to the Bifrost request type its
+// :action suffix addresses. :generateContent and :streamGenerateContent are Responses-shaped
+// (Bifrost routes GenAI generation through the Responses schema), :predict is Imagen and
+// :predictLongRunning is Veo. A query string is ignored; Interactions paths and unknown actions
+// return "". Usage extraction and passthrough log parsing both dispatch on this.
+func ClassifyPassthroughPath(path string) schemas.RequestType {
+	if idx := strings.IndexByte(path, '?'); idx >= 0 {
+		path = path[:idx]
+	}
+	if strings.Contains(path, "/interactions") {
+		return ""
+	}
+
+	action := ""
+	if colonIdx := strings.LastIndexByte(path, ':'); colonIdx >= 0 {
+		action = path[colonIdx+1:]
+	}
+
+	switch action {
+	case "generateContent", "streamGenerateContent":
+		return schemas.ResponsesRequest
+	case "countTokens":
+		return schemas.CountTokensRequest
+	case "embedContent", "batchEmbedContents":
+		return schemas.EmbeddingRequest
+	case "predict":
+		return schemas.ImageGenerationRequest
+	case "predictLongRunning":
+		return schemas.VideoGenerationRequest
+	}
+	return ""
+}
+
 // ExtractGeminiPassthroughUsage extracts usage from a completed Gemini/Vertex
 // passthrough response. Handles both SSE streaming (last event) and plain JSON
 // (non-streaming) for all billable endpoint types.
@@ -20,32 +63,18 @@ import (
 // :predict is Imagen priced per-image. :predictLongRunning is Veo priced per-second.
 // /interactions paths use the Interactions API usage shape.
 func ExtractGeminiPassthroughUsage(path string, reqBody, body []byte) *schemas.BifrostPassthroughUsage {
-	if idx := strings.IndexByte(path, '?'); idx >= 0 {
-		path = path[:idx]
-	}
-
-	// Interactions API uses /interactions paths — no colon suffix.
-	if strings.Contains(path, "/interactions") {
+	if IsInteractionsPassthroughPath(path) {
 		return extractGeminiInteractionsUsage(body)
 	}
 
-	colonIdx := strings.LastIndexByte(path, ':')
-	action := ""
-	if colonIdx >= 0 {
-		action = path[colonIdx+1:]
-	}
-
-	switch action {
-	case "generateContent", "streamGenerateContent":
+	switch ClassifyPassthroughPath(path) {
+	case schemas.ResponsesRequest:
 		return extractGeminiGenerateContentUsage(body)
-
-	case "embedContent", "batchEmbedContents":
+	case schemas.EmbeddingRequest:
 		return extractGeminiEmbeddingUsage(body)
-
-	case "predict":
+	case schemas.ImageGenerationRequest:
 		return extractGeminiPredictUsage(reqBody, body)
-
-	case "predictLongRunning":
+	case schemas.VideoGenerationRequest:
 		// Veo video generation — priced per second of video.
 		return extractGeminiVeoUsage(reqBody)
 	}

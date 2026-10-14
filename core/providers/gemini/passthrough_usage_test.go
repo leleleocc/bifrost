@@ -184,3 +184,38 @@ func geminiMustLLM(t *testing.T, u *schemas.BifrostPassthroughUsage, prompt, com
 			u.LLMUsage.PromptTokens, u.LLMUsage.CompletionTokens, u.LLMUsage.TotalTokens, prompt, completion, total)
 	}
 }
+
+func TestClassifyPassthroughPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want schemas.RequestType
+	}{
+		{"/models/gemini-2.5-flash:generateContent", schemas.ResponsesRequest},
+		{"/models/gemini-2.5-flash:streamGenerateContent?alt=sse", schemas.ResponsesRequest},
+		{"/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent", schemas.ResponsesRequest},
+		{"/models/gemini-2.5-flash:countTokens", schemas.CountTokensRequest},
+		{"/models/text-embedding-004:embedContent", schemas.EmbeddingRequest},
+		{"/models/text-embedding-004:batchEmbedContents", schemas.EmbeddingRequest},
+		{"/models/imagen-4.0-generate-001:predict", schemas.ImageGenerationRequest},
+		{"/models/veo-3.0-generate-001:predictLongRunning", schemas.VideoGenerationRequest},
+		{"/interactions", ""},
+		{"/interactions/abc:cancel", ""},
+		{"/models", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := gemini.ClassifyPassthroughPath(tt.path); got != tt.want {
+				t.Fatalf("ClassifyPassthroughPath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsInteractionsPassthroughPath(t *testing.T) {
+	if !gemini.IsInteractionsPassthroughPath("/v1beta/interactions?alt=sse") {
+		t.Fatal("expected /interactions to be an Interactions path")
+	}
+	if gemini.IsInteractionsPassthroughPath("/models/gemini-2.5-flash:generateContent") {
+		t.Fatal("generateContent is not an Interactions path")
+	}
+}

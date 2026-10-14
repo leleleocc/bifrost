@@ -304,3 +304,38 @@ func TestExtractOpenAIPassthroughUsage_ResponsesTopLevelToolUsage(t *testing.T) 
 		})
 	}
 }
+
+func TestClassifyPassthroughPath(t *testing.T) {
+	tests := []struct {
+		method string
+		path   string
+		want   schemas.RequestType
+	}{
+		{"POST", "/v1/chat/completions", schemas.ChatCompletionRequest},
+		{"POST", "/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21", schemas.ChatCompletionRequest},
+		{"POST", "/v1/completions", schemas.TextCompletionRequest},
+		{"POST", "/v1/responses", schemas.ResponsesRequest},
+		{"POST", "/backend-api/codex/responses", schemas.ResponsesRequest},
+		{"POST", "/v1/embeddings", schemas.EmbeddingRequest},
+		{"POST", "/v1/audio/speech", schemas.SpeechRequest},
+		{"POST", "/v1/audio/transcriptions", schemas.TranscriptionRequest},
+		{"POST", "/v1/audio/translations", schemas.TranscriptionRequest},
+		{"POST", "/v1/images/generations", schemas.ImageGenerationRequest},
+		{"POST", "/v1/images/edits", schemas.ImageEditRequest},
+		{"POST", "/v1/images/variations", schemas.ImageVariationRequest},
+		{"POST", "/v1/videos", schemas.VideoGenerationRequest},
+		{"GET", "/v1/videos/video_123", ""},
+		{"POST", "/v1/containers", schemas.ContainerCreateRequest},
+		{"GET", "/v1/containers", schemas.ContainerListRequest},
+		{"GET", "/v1/containers/cntr_1", ""},
+		{"GET", "/v1/models", ""},
+		{"POST", "/v1/responses/resp_1/cancel", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			if got := openai.ClassifyPassthroughPath(tt.method, tt.path); got != tt.want {
+				t.Fatalf("ClassifyPassthroughPath(%q, %q) = %q, want %q", tt.method, tt.path, got, tt.want)
+			}
+		})
+	}
+}
